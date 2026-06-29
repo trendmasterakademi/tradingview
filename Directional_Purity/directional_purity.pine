@@ -1,4 +1,8 @@
 //@version=6
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 indicator("Directional Purity [Community Edition]", shorttitle="DirPurity", overlay=false, precision=4, max_labels_count=500, max_boxes_count=500)
 
 // ── Description ──────────────────────────────────────────────────────────
