@@ -1,0 +1,101 @@
+//@version=6
+indicator("Directional Purity [Community Edition]", shorttitle="DirPurity", overlay=false, precision=4, max_labels_count=500, max_boxes_count=500)
+
+// ── Description ──────────────────────────────────────────────────────────
+// Developed by [USER] in partnership with Antigravity AI.
+//
+// "Directional Purity" is a next-generation momentum and trend strength indicator.
+// Traditionally, trend strength indicators like ADX suffer from significant lag
+// because they rely on double-smoothed moving averages of directional movement.
+//
+// This indicator resolves the lag problem by applying the math of Kaufman's
+// Efficiency Ratio (ER) as a "Directional Purity" regulator, which is then used
+// dynamically as the smoothing multiplier (vi) inside a 13-period VIDYA 
+// (Variable Index Dynamic Average) framework.
+//
+// The core innovation:
+// Chande's CMO absolute value and Kaufman's Efficiency Ratio (ER) are mathematically
+// equivalent when calculated via a telescoping sum. By identifying this relationship,
+// we can implement a highly optimized, loop-free, vectorized calculation that runs
+// instantaneously on large histories.
+
+// ── Inputs ────────────────────────────────────────────────────────────────
+// Colors
+color COLOR_BULLISH  = #089981 // Emerald Green
+color COLOR_BEARISH  = #F23645 // Crimson Red
+color COLOR_RANGING  = #787B86 // Cool Gray
+color COLOR_BG_RANGE = color.new(#787B86, 92)
+
+cmo_period   = input.int  (9,    "CMO/ER Period",    minval=1, group="Indicator Parameters", tooltip="Period used to calculate the Directional Purity (Efficiency Ratio). Smaller values react faster; larger values are smoother.")
+vidya_period = input.int  (13,   "VIDYA Period",     minval=1, group="Indicator Parameters", tooltip="Base period for the VIDYA recursive smoothing anchor. Default is 13.")
+threshold    = input.float(0.25, "Trend Threshold",  minval=0.0, maxval=1.0, step=0.05, group="Indicator Parameters", tooltip="Purity level below which the market is considered to be ranging/consolidating.")
+
+show_dashboard = input.bool(true, "Show Info Dashboard", group="Visual Settings & Dashboard", tooltip="Displays a mini table panel with real-time stats in the indicator pane.")
+dashboard_pos  = input.string(position.top_right, "Dashboard Position", options=[position.top_right, position.top_left, position.bottom_right, position.bottom_left], group="Visual Settings & Dashboard", tooltip="Position of the info dashboard.")
+
+// ── Mathematical Engine (Vectorized) ──────────────────────────────────────
+// Mathematically equivalent to the manual loop but computes exponentially faster in TradingView's runtime.
+f_directional_purity(src, len) =>
+    change = math.abs(src - src[len])
+    volatility = math.sum(math.abs(src - src[1]), len)
+    volatility == 0.0 ? 0.0 : change / volatility
+
+// ── VIDYA (Recursive) ─────────────────────────────────────────────────────
+var float vidya = na
+k = 2.0 / (vidya_period + 1.0)
+vi = f_directional_purity(close, cmo_period)
+
+// Maintain stability during startup when vi is na
+if not na(vi)
+    vidya := na(vidya) ? close : vidya[1] + k * vi * (close - vidya[1])
+else
+    vidya := close
+
+// ── State & Trend Logic ───────────────────────────────────────────────────
+purity  = vi
+ranging = purity < threshold
+
+// Determine Trend Direction relative to VIDYA
+is_bullish = close > vidya
+is_bearish = close <= vidya
+
+// Assign colors based on state
+col = ranging    ? COLOR_RANGING :
+      is_bullish ? COLOR_BULLISH :
+                   COLOR_BEARISH
+
+// ── Plots ─────────────────────────────────────────────────────────────────
+// Plot the Directional Purity line
+plot(purity, "Directional Purity", color=col, linewidth=2, style=plot.style_line)
+
+// Baseline bands
+hline(threshold, "Threshold", color=color.new(COLOR_RANGING, 50), linestyle=hline.style_dashed)
+hline(1.0,       "Top Band",  color=color.new(COLOR_RANGING, 75))
+hline(0.0,       "Zero Band", color=color.new(COLOR_RANGING, 75))
+
+// Fill background during ranging periods
+bgcolor(ranging ? COLOR_BG_RANGE : na, title="Range Background Highlight")
+
+// ── Info Dashboard ────────────────────────────────────────────────────────
+var table info_table = na
+if show_dashboard and barstate.islast
+    info_table := table.new(dashboard_pos, 2, 3, bgcolor=color.new(color.black, 30), border_width=1, border_color=color.new(COLOR_RANGING, 50))
+    
+    // Header Row
+    table.cell(info_table, 0, 0, "Metric",           bgcolor=color.new(COLOR_RANGING, 30), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(info_table, 1, 0, "Value",            bgcolor=color.new(COLOR_RANGING, 30), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    
+    // Row 1: State
+    state_text = ranging ? "Ranging" : (is_bullish ? "Trending Bullish" : "Trending Bearish")
+    state_col  = ranging ? COLOR_RANGING : (is_bullish ? COLOR_BULLISH : COLOR_BEARISH)
+    table.cell(info_table, 0, 1, "Market State",     bgcolor=color.new(color.black, 50),   text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 1, state_text,          bgcolor=color.new(state_col, 80),     text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    
+    // Row 2: Trend Strength (Purity)
+    table.cell(info_table, 0, 2, "Purity (Strength)", bgcolor=color.new(color.black, 50),   text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 2, str.tostring(purity * 100, "0.0") + "%", bgcolor=color.new(color.black, 50), text_color=state_col, text_size=size.small, text_halign=text.align_center)
+
+// ── Alert Conditions ──────────────────────────────────────────────────────
+alertcondition(ta.crossover(purity, threshold),   title="Trend Breakout",    message="Directional Purity crossed above threshold. Trend is accelerating!")
+alertcondition(ta.crossunder(purity, threshold),  title="Consolidation Range", message="Directional Purity fell below threshold. Market is entering a range.")
+alertcondition(is_bullish != is_bullish[1] and not ranging, title="Trend Direction Change", message="Trend direction changed relative to VIDYA base.")
